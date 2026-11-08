@@ -1,0 +1,20 @@
+WEBGUARD STARTER — QUICK START
+============================
+
+1) Install Node.js 20 or newer.
+2) Open this folder in VS Code.
+3) Terminal: cd frontend
+4) Terminal: npm install
+5) Terminal: npm run dev
+6) Browser: http://127.0.0.1:5173
+7) Click "Explore the live demo" (NO Supabase needed for preview).
+
+For real sign-in, PostgreSQL storage and Flask API, follow README.md.
+
+WHAT WORKS: UI, theme switching, demo target management,
+Supabase auth integration, backend target CRUD, activity log.
+
+NOT BUILT YET: SQLi, XSS, headers, cookies, sensitive-file scanners;
+actual scanning; vulnerability findings; PDF generation.
+
+Only register locally hosted websites you are authorized to test.

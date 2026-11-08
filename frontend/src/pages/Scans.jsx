@@ -1,0 +1,14 @@
+import React from 'react'
+import { ArrowRight, CheckCircle2, CircleDot, Clock3, CodeXml, Construction, FileSearch, Fingerprint, Lock, Radar, ScanSearch, ShieldCheck, Target } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { modules } from '../lib/constants'
+import { PlannedBadge, SectionHeader } from '../components/Icons'
+export default function Scans() {
+  return <><div className="page-topline"><div><div className="eyebrow">SECURITY OPERATIONS <span className="eyebrow-line"/> 02</div><h1>Scan engine<span className="heading-dot">.</span></h1><p>One scan, five focused checks. Scanner implementation comes in the next phase.</p></div><span className="page-tag"><Construction size={16}/> Under development</span></div>
+    <div className="panel scan-hero"><div className="scan-hero-icon"><Radar size={33}/></div><div><span className="eyebrow">SCANNER STATUS</span><h2>Preparing for takeoff.</h2><p>The scan orchestration and vulnerability checks are intentionally not active in this starter. The interface below is the integration blueprint for your team.</p><div className="scan-hero-actions"><button className="btn btn-primary" disabled title="Implement scanners before enabling">Start new scan <ArrowRight size={17}/></button><Link className="btn btn-outline" to="/targets">Manage targets</Link></div></div></div>
+    <SectionHeader eyebrow="MODULE ROADMAP" title="Five checks. One clear workflow." text="Build each detector independently and verify it against both lab websites."/>
+    <div className="module-grid">{modules.map((m,i)=><div className="panel module-card" key={m.id}><div className="module-card-top"><div className={`module-icon large tone-${m.color}`}><m.icon size={22}/></div><PlannedBadge/></div><h3>{m.name}</h3><p>{m.subtitle}</p><div className="module-card-footer"><span>CHECK {String(i+1).padStart(2,'0')}</span><span>Not implemented</span></div></div>)}</div>
+    <div className="panel workflow-panel"><SectionHeader eyebrow="HOW IT WILL WORK" title="Planned scan workflow"/><div className="workflow-row">{[{icon:Target,n:'01',label:'Choose target',desc:'Select your localhost website'},{icon:FileSearch,n:'02',label:'Discover inputs',desc:'Find forms, routes, parameters'},{icon:ScanSearch,n:'03',label:'Run test modules',desc:'Controlled, harmless probes'},{icon:ShieldCheck,n:'04',label:'Review evidence',desc:'Severity and remediation'}].map((x,i)=><div className="workflow-step" key={x.n}><div className="workflow-icon"><x.icon size={21}/></div><span>{x.n}</span><h4>{x.label}</h4><p>{x.desc}</p>{i<3&&<ArrowRight className="workflow-next" size={19}/>}</div>)}</div></div>
+    <div className="notice-strip"><Lock size={19}/><div><strong>No live penetration testing yet</strong><span>Nothing on this page sends attack payloads. This foundation is safe for architecture and UI development.</span></div></div>
+  </>
+}
