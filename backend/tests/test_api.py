@@ -10,12 +10,13 @@ class FoundationTest(unittest.TestCase):
     def test_health(self):
         response = self.client.get('/api/health')
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.json['scanner_ready'])
+        self.assertTrue(response.json['scanner_ready'])
 
-    def test_features_are_planned(self):
+    def test_only_reflected_xss_is_implemented(self):
         response = self.client.get('/api/features')
         self.assertEqual(len(response.json['features']), 5)
-        self.assertTrue(all(f['status'] == 'planned' for f in response.json['features']))
+        self.assertEqual([f['id'] for f in response.json['features'] if f['status'] == 'implemented'], ['xss'])
+        self.assertTrue(all(f['status'] == 'planned' for f in response.json['features'] if f['id'] != 'xss'))
 
     def test_loopback_addresses_accepted(self):
         for url in ['http://localhost:5001', 'http://127.0.0.1:5002', 'http://[::1]:5003']:

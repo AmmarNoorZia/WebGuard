@@ -1,142 +1,162 @@
-# WebGuard — Starter Website (v0.1.0)
+# WebGuard v0.3.0 - Reflected XSS Scanner
 
-**WebGuard** is a locally restricted university web-security assessment platform. This ZIP provides the **main WebGuard interface**, not the two test websites. Its frontend, backend, Supabase integration, authentication flow, UI pages and target-management features are prepared. **It does not yet scan, exploit, or report real vulnerabilities.** SQLi, XSS, headers, cookies and exposed-file checks are placeholders for your team to implement and validate in later phases.
+WebGuard is a university Information Security project for controlled testing of
+team-owned, deliberately vulnerable local websites. It uses React + Vite,
+Flask, Supabase Auth/PostgreSQL, Requests, BeautifulSoup and Playwright.
 
-## 1. What is included
+## Current implementation
 
-- React + Vite dashboard with responsive **dark and light themes** (charcoal/green with a violet accent).
-- Login/signup using Supabase Auth (after configuration).
-- **Explore Demo** works without a Supabase account, storing only preview targets/activity in your browser. No secure auth is implied in demo mode.
-- Target add/list/search/delete. **Only localhost / 127.0.0.1 / ::1 test URLs** are accepted.
-- Activity log for target additions and removals.
-- Scans, Findings and Reports pages with honest **Not implemented / No findings** states.
-- Python Flask REST API for authenticated target and activity CRUD.
-- Supabase PostgreSQL schema with per-user Row Level Security (RLS).
-- Basic API tests, environment examples, team-oriented Codex instructions.
+- Supabase login/signup, session persistence and per-user Row Level Security.
+- Registered localhost target management and activity history.
+- Reflected XSS testing of `/search?q` using the harmless same-origin
+  `/static/xss_demo.js` demonstration script.
+- Browser execution verification through **installed Google Chrome**, launched
+  by Playwright with `channel="chrome"` and `headless=True`. No Chromium download
+  is needed for the scanner or browser tests.
+- Saved scan history, evidence, Findings and authorized PDF downloads.
+- Existing responsive dark/light themes and green/charcoal/violet design.
 
-## 2. Fastest preview — no database or backend needed
+The team reports these verified results for its separately maintained sites:
 
-Requirements: **Node.js 20+**, npm, VS Code.
+| Website | URL | Reflected XSS result |
+| --- | --- | --- |
+| A | `http://127.0.0.1:5001` | Confirmed - High |
+| B | `http://127.0.0.1:5002` | Not detected |
 
-```powershell
-cd frontend
-npm install
-npm run dev
-```
+The team also verified Supabase scan history and PDF reporting. Stored XSS,
+DOM-based XSS, SQL injection, security headers, sensitive resources and cookie
+testing are **not implemented** in this checkpoint.
 
-Open **http://127.0.0.1:5173** and click **Explore the live demo**. Browse pages, switch theme, and add/remove local targets. These preview changes use browser localStorage, **not** Supabase. Demo target data is initially populated with `http://localhost:5001` and `http://localhost:5002`; those sites are not included or launched here.
+`confirmed` requires the injected script element, a successful demo-script
+response, and the exact alert `XSS demo - WebGuard Dummy Site A` in the test
+browser, without the same alert in the normal baseline. Reflection alone is
+insufficient. `not_detected` means this controlled test did not demonstrate
+execution; it does not establish that a website has no XSS. Failed or unreliable
+verification is `inconclusive`.
 
-If you have not installed Node.js, use https://nodejs.org/.
+## Setup (Windows PowerShell)
 
-## 3. Connect real Supabase accounts and data
+Requirements: Python 3.11+, Node.js 20+, installed Google Chrome and a configured
+Supabase project. The companion Website A/B applications are separate projects
+and are not included in this repository.
 
-**Step A — Create your project.** Create a Supabase project at https://supabase.com/dashboard and open **SQL Editor**. Run the contents of `supabase/schema.sql`. It creates `targets` and `activity_events`, with RLS enabled so users access only their records.
-
-**Step B — Frontend settings.** Copy `frontend/.env.example` to `frontend/.env` and fill:
-
-```env
-VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_OR_LEGACY_ANON_KEY
-```
-
-**Step C — Backend settings.** Copy `backend/.env.example` to `backend/.env` and fill:
-
-```env
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_OR_LEGACY_ANON_KEY
-FLASK_HOST=127.0.0.1
-FLASK_PORT=5000
-```
-
-**NEVER copy a Supabase `service_role` key or secret key to the frontend** or commit `.env` files. Only publishable/anon keys should be used in these settings. RLS is the access-control boundary. The backend authenticates the token through Supabase Auth and forwards the *user's* JWT to PostgREST so RLS applies.
-
-**Step D — Start the backend** in a fresh VS Code terminal:
+From the repository root:
 
 ```powershell
-cd backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python app.py
+python -m venv backend\.venv
+& .\backend\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
+Push-Location frontend
+npm.cmd ci
+Pop-Location
 ```
 
-Check **http://127.0.0.1:5000/api/health** (shows `scanner_ready: false`).
+Keep existing `.env` files. On a new checkout only, copy `backend/.env.example`
+to `backend/.env` and `frontend/.env.example` to `frontend/.env`, then set the same
+Supabase project URL and **publishable key** in both. Never use or commit a
+secret/service-role key. Backend requests forward the signed-in user's JWT so
+database RLS applies.
 
-**Step E — Start the frontend** in another terminal:
+In your existing Supabase project's SQL Editor, apply these files in order:
+
+1. `supabase/schema.sql` if the foundation tables are not installed.
+2. `supabase/migrations/001_scan_results.sql` for scan runs, findings, own-user
+   RLS policies and atomic result storage.
+
+The scanner migration is additive; it does not delete existing targets,
+activity or authentication data. No SQL migration is executed by startup.
+
+Backend terminal, from the repository root:
 
 ```powershell
-cd frontend
-npm install
-npm run dev
+Set-Location backend
+& .\.venv\Scripts\python.exe app.py
 ```
 
-Open **http://127.0.0.1:5173**. The React app proxies `/api` calls to Flask on port 5000.
-
-**Step F — Create an account.** On the login screen, choose **Create account**. If Supabase has email confirmation enabled, confirm the email before signing in. Then use the targets page to add `http://localhost:5001` and `http://localhost:5002` once those test websites have been started separately.
-
-> If authenticated CRUD fails, check both `.env` files, confirm `supabase/schema.sql` was applied, inspect the Flask terminal, and verify the login email was confirmed if required.
-
-## 4. Project structure
-
-```text
-WebGuard_Starter/
-├── frontend/
-│   ├── src/
-│   │   ├── components/        # Sidebar, branding, modals, common UI
-│   │   ├── contexts/          # Authentication, theme, data, notifications
-│   │   ├── lib/               # Supabase client, API calls, module metadata
-│   │   ├── pages/             # Dashboard, Targets, Scans, Findings, Reports, Activity, Settings
-│   │   ├── App.jsx
-│   │   ├── main.jsx
-│   │   └── styles.css
-│   ├── .env.example
-│   ├── package.json
-│   └── vite.config.js
-├── backend/
-│   ├── app.py               # Authenticated Flask API — NO scanners yet
-│   ├── tests/test_api.py
-│   ├── .env.example
-│   └── requirements.txt
-├── supabase/schema.sql     # Tables + RLS policies
-├── AGENTS.md               # Codex instructions
-└── README.md
-```
-
-## 5. Planned feature interfaces
-
-- `GET /api/health`: current system health (public, no data exposed).
-- `GET /api/features`: shows all five modules with status `planned`.
-- `GET /api/me`: validates Supabase session (authenticated).
-- `GET /api/targets`: list your targets (authenticated).
-- `POST /api/targets`: create a localhost target (authenticated).
-- `DELETE /api/targets/:id`: remove your target (authenticated).
-- `POST /api/targets/validate`: URL syntax/allowlist validation **without making network requests**.
-- `GET /api/activity`: list your target events (authenticated).
-
-Future modules: `backend/scanner/` with separate check files; an orchestrator; verified findings and scan history tables; and PDF export. **Do not enable 'Start scan' until you have implemented and tested actual scanner behavior.**
-
-## 6. Security restrictions for the team
-
-- This starter is for **authorized, locally hosted lab websites only**.
-- The backend rejects non-loopback target URLs; the frontend enforces the same rule for preview mode. Scanner modules must independently enforce this allowlist at execution time and after redirects/DNS resolution.
-- The app does **not** perform network requests to registered targets. Storing a URL does not scan it.
-- Never treat plain text differences as proof of SQL injection. Validate each test against secure and vulnerable versions.
-- Never scan random internet websites or third-party services without explicit written authorization.
-- Supabase RLS policies must be tested using at least two separately authenticated accounts before relying on them for multi-user isolation.
-- Browser demo uses localStorage; it is not a security boundary and must never be confused with real authentication.
-- The backend does not provide rate limiting, audit durability, production secret management or deployment configuration. It is a **development starter**, not a production security product.
-
-## 7. Run API tests
+Frontend terminal, from the repository root:
 
 ```powershell
-cd backend
-python -m unittest discover -s tests -v
+Set-Location frontend
+npm.cmd run dev
 ```
 
-No Supabase project is required for the health, feature-flag and URL validation unit tests.
+Open `http://127.0.0.1:5173`. Flask runs at `http://127.0.0.1:5000`; Vite proxies
+`/api` to Flask. Start Website A and Website B in separate processes on ports
+5001 and 5002 using their own project instructions. Register their root URLs on
+**Targets**, sign in, then select a target on **Scans** and click **Run Reflected
+XSS Scan**. **Findings** shows persisted observations; **Reports** downloads PDFs
+from the saved results. Preview/demo mode cannot run scans.
 
-## 8. Team workflow when Codex is available
+See [XSS_SETUP.md](XSS_SETUP.md) for detailed setup, test-site commands, evidence
+interpretation, two-account RLS verification and manual acceptance steps.
 
-Open the extracted folder in VS Code, connect it to your GitHub repository, and let Codex read **AGENTS.md** before editing. Work in separate branches. Build one scanner module at a time and verify it on both companion test sites before merging.
+## Tests and build
 
-Recommended first commit message: `Add WebGuard React Flask Supabase starter`.
+From `backend/`, run the offline tests and existing unittest contracts:
+
+```powershell
+& .\.venv\Scripts\python.exe -B -m pytest -q -p no:cacheprovider
+& .\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
+```
+
+Optional real Chrome tests with disposable A/B fixtures (ports 5001/5002 must
+be free; running teammates' sites are never replaced):
+
+```powershell
+& .\.venv\Scripts\python.exe -B -m pytest -q --run-browser-fixtures
+```
+
+To test the team's already running A/B sites instead:
+
+```powershell
+& .\.venv\Scripts\python.exe -B -m pytest -q -m live --run-live-labs
+```
+
+For the React/Flask browser flow, start only Vite, leave ports 5000/5001/5002
+free, and run `python -m pytest -q --run-browser-fixtures --run-ui` with the
+backend virtual environment. This test mocks Supabase and stores generated
+reports/screenshots in pytest temporary directories; it does not verify live RLS.
+
+From `frontend/`, build the production application:
+
+```powershell
+npm.cmd run build
+```
+
+## API and source map
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/health`, `GET /api/features` | Public health and implemented-module status |
+| `GET /api/me` | Validate the Supabase session |
+| `GET/POST /api/targets`, `DELETE /api/targets/<id>` | User-owned registered targets |
+| `POST /api/targets/validate` | Validate URL syntax without probing it |
+| `POST /api/scans/xss` | Scan only the supplied registered `target_id` |
+| `GET /api/scans`, `GET /api/findings` | Reload saved user-owned results |
+| `GET /api/scans/<id>/report.pdf` | Authorized PDF from persisted evidence |
+| `GET /api/activity` | User-owned activity history |
+
+The application lives in `frontend/src/`; authentication remains in
+`frontend/src/contexts/AppContext.jsx`. `backend/app.py` reuses the existing
+authentication/database helpers. Detection is isolated in
+`backend/scanners/xss_reflected.py`, reporting in `backend/reporting/pdf.py`,
+tests in `backend/tests/`, and database definitions in `supabase/`.
+
+## Scope and team workflow
+
+Scanner destinations are restricted to HTTP loopback ports **5001 and 5002**,
+at root or `/search` without a query, fragment or credentials. Localhost DNS must
+resolve only to loopback and is pinned to a numeric address. HTTP redirects are
+never followed; requests have time, size and count limits and ignore ambient
+proxies/credentials. Chrome stays offline, receives captured responses with CSP
+preserved, and loads only the same-origin demo script through the guarded HTTP
+client. Cross-origin requests, additional navigation, subframes, websockets and
+service workers are blocked.
+
+Never test public/external addresses or use credential theft, exfiltration or
+destructive payloads. Keep `.env`, virtual environments, local databases,
+browser binaries, temporary files and generated reports out of Git. Use separate
+feature branches and review changes before merging into shared `main`.
+
+This is a local educational service, with synchronous scanning and one active
+scan per backend process. New scanners, starting with Stored XSS, belong in a
+subsequent checkpoint after this version is reviewed and merged.

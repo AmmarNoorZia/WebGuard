@@ -1,14 +1,46 @@
-import React from 'react'
-import { ArrowRight, CheckCircle2, CircleDot, Clock3, CodeXml, Construction, FileSearch, Fingerprint, Lock, Radar, ScanSearch, ShieldCheck, Target } from 'lucide-react'
+import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Radar } from 'lucide-react'
+import { useApp } from '../contexts/AppContext'
+import { apiRequest } from '../lib/api'
+import { useScanData } from '../lib/useScanData'
 import { modules } from '../lib/constants'
-import { PlannedBadge, SectionHeader } from '../components/Icons'
+import { EmptyState, SectionHeader } from '../components/Icons'
+import ScanResult from '../components/ScanResult'
+
 export default function Scans() {
-  return <><div className="page-topline"><div><div className="eyebrow">SECURITY OPERATIONS <span className="eyebrow-line"/> 02</div><h1>Scan engine<span className="heading-dot">.</span></h1><p>One scan, five focused checks. Scanner implementation comes in the next phase.</p></div><span className="page-tag"><Construction size={16}/> Under development</span></div>
-    <div className="panel scan-hero"><div className="scan-hero-icon"><Radar size={33}/></div><div><span className="eyebrow">SCANNER STATUS</span><h2>Preparing for takeoff.</h2><p>The scan orchestration and vulnerability checks are intentionally not active in this starter. The interface below is the integration blueprint for your team.</p><div className="scan-hero-actions"><button className="btn btn-primary" disabled title="Implement scanners before enabling">Start new scan <ArrowRight size={17}/></button><Link className="btn btn-outline" to="/targets">Manage targets</Link></div></div></div>
-    <SectionHeader eyebrow="MODULE ROADMAP" title="Five checks. One clear workflow." text="Build each detector independently and verify it against both lab websites."/>
-    <div className="module-grid">{modules.map((m,i)=><div className="panel module-card" key={m.id}><div className="module-card-top"><div className={`module-icon large tone-${m.color}`}><m.icon size={22}/></div><PlannedBadge/></div><h3>{m.name}</h3><p>{m.subtitle}</p><div className="module-card-footer"><span>CHECK {String(i+1).padStart(2,'0')}</span><span>Not implemented</span></div></div>)}</div>
-    <div className="panel workflow-panel"><SectionHeader eyebrow="HOW IT WILL WORK" title="Planned scan workflow"/><div className="workflow-row">{[{icon:Target,n:'01',label:'Choose target',desc:'Select your localhost website'},{icon:FileSearch,n:'02',label:'Discover inputs',desc:'Find forms, routes, parameters'},{icon:ScanSearch,n:'03',label:'Run test modules',desc:'Controlled, harmless probes'},{icon:ShieldCheck,n:'04',label:'Review evidence',desc:'Severity and remediation'}].map((x,i)=><div className="workflow-step" key={x.n}><div className="workflow-icon"><x.icon size={21}/></div><span>{x.n}</span><h4>{x.label}</h4><p>{x.desc}</p>{i<3&&<ArrowRight className="workflow-next" size={19}/>}</div>)}</div></div>
-    <div className="notice-strip"><Lock size={19}/><div><strong>No live penetration testing yet</strong><span>Nothing on this page sends attack payloads. This foundation is safe for architecture and UI development.</span></div></div>
+  const { targets, mode, loadingData, refresh } = useApp()
+  const history = useScanData('/scans', 'scans')
+  const [selectedId, setSelectedId] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [latest, setLatest] = useState(null)
+  const targetId = selectedId || targets[0]?.id || ''
+  const run = async event => {
+    event.preventDefault(); setBusy(true); setError(''); setLatest(null)
+    try {
+      const data = await apiRequest('/scans/xss', { method: 'POST', body: JSON.stringify({ target_id: targetId }) })
+      setLatest(data.scan)
+      await Promise.all([history.reload(), refresh()])
+    } catch (err) { setError(err.message); if (err.scan) setLatest(err.scan) }
+    finally { setBusy(false) }
+  }
+  return <>
+    <div className="page-topline"><div><div className="eyebrow">SECURITY OPERATIONS</div><h1>Scan engine<span className="heading-dot">.</span></h1><p>Controlled Reflected XSS testing for your authorized local websites.</p></div><Link className="btn btn-outline" to="/targets">Manage targets</Link></div>
+    <div className="panel scan-controls"><h2>Reflected XSS</h2><p>Tests /search?q with the existing same-origin demonstration script. Chromium checks the expected alert with CSP enabled.</p>
+      <form className="form-stack" onSubmit={run}><label>Registered target<select aria-label="Registered target" value={targetId} disabled={busy || loadingData} onChange={e => setSelectedId(e.target.value)}><option value="" disabled>Select a target</option>{targets.map(t => <option key={t.id} value={t.id}>{t.name} — {t.url}</option>)}</select></label><p className="muted">Allowed: HTTP loopback ports 5001 and 5002. Register the root URL or /search without a query.</p><button className="btn btn-primary" disabled={busy || !targetId || mode === 'demo' || loadingData}>{busy ? 'Scanning with Chromium...' : 'Run Reflected XSS Scan'}</button></form>
+      {mode === 'demo' && <p className="form-error">Sign in with your Supabase account to run and save real scans. Preview mode does not run tests.</p>}
+      {busy && <p role="status">Testing the normal response, HTML reflection and browser execution. Please wait.</p>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+    </div>
+    {latest && <ScanResult scan={latest}/>}
+    <SectionHeader eyebrow="SAVED HISTORY" title="Scan results" action={<button className="btn btn-outline" disabled={history.loading || busy} onClick={history.reload}>Refresh</button>}/>
+    {history.error && <p role="alert" className="form-error">{history.error}</p>}
+    {history.loading && <p role="status">Loading saved scans...</p>}
+    {history.items.filter(s => s.id !== latest?.id).map(s => <ScanResult key={s.id} scan={s}/>)}
+    {!history.loading && !history.error && !history.items.length && !latest && <div className="panel"><EmptyState icon={Radar} title="No saved scans" text="Register a local lab website, sign in, and run the controlled test."/></div>}
+    <SectionHeader eyebrow="MODULES" title="Implementation status"/>
+    <div className="module-grid">{modules.map(m => <div className="panel module-card" key={m.id}><div className={`module-icon tone-${m.color}`}><m.icon size={22}/></div><h3>{m.id === 'xss' ? 'Reflected XSS' : m.name}</h3><p>{m.id === 'xss' ? 'Implemented: browser-verified /search?q test' : 'Not implemented'}</p></div>)}</div>
+    <div className="notice-strip"><div><strong>Scope of this module</strong><span>Stored XSS and DOM-based XSS are not implemented. Not detected does not prove a website has no XSS vulnerabilities.</span></div></div>
   </>
 }
