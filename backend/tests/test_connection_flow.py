@@ -28,11 +28,11 @@ class ConnectionTests(unittest.TestCase):
     def bearer(self):
         return {"Authorization": "Bearer fake-test-jwt"}
 
-    def test_health_reports_backend_ready_but_scanner_not_ready(self):
+    def test_health_reports_backend_and_reflected_scanner_ready(self):
         r = self.client.get("/api/health")
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.json["supabase_configured"])
-        self.assertFalse(r.json["scanner_ready"])
+        self.assertTrue(r.json["scanner_ready"])
 
     def test_me_rejects_missing_token(self):
         r = self.client.get("/api/me")

@@ -1,19 +1,18 @@
-"""WebGuard foundation API.
-
-Contains authenticated target CRUD and audit history, NOT vulnerability scanners.
-This development service binds to loopback. Never accept arbitrary external URLs.
-"""
+"""Authenticated WebGuard API and restricted reflected-XSS lab scanning."""
 
 from __future__ import annotations
 
 import os
 import uuid
+from threading import BoundedSemaphore
 from functools import wraps
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, g, jsonify, request
+from flask import Flask, g, jsonify, request, send_file
+
+from scanners.xss_reflected import ScanBlocked, run_scan, validate_target as validate_scan_target
 
 load_dotenv()
 app = Flask(__name__)
@@ -29,6 +28,7 @@ CONFIGURED = bool(
     and "REPLACE_ME" not in SUPABASE_KEY.upper()
 )
 HTTP_TIMEOUT = 10
+SCAN_SLOT = BoundedSemaphore(1)
 ENVIRONMENTS = {
     "Local test",
     "Vulnerable / secure mix",
@@ -143,7 +143,7 @@ def table_request(method: str, table: str, *, params=None, payload=None, prefer=
             raise ApiError("Database permission denied. Check RLS policies and authentication.", 403)
         if resp.status_code == 409:
             raise ApiError("This target is already registered.", 409)
-        raise ApiError("Database operation failed. Ensure supabase/schema.sql has been applied.", 502)
+        raise ApiError("Database operation failed. Apply supabase/schema.sql and supabase/migrations/001_scan_results.sql in SQL Editor.", 502)
     if not resp.content:
         return []
     try:
@@ -168,16 +168,16 @@ def record_event(event_type: str, description: str):
 
 @app.get("/api/health")
 def health():
-    return jsonify({"status": "ok", "product": "WebGuard", "version": "0.2.0", "supabase_configured": CONFIGURED, "scanner_ready": False})
+    return jsonify({"status": "ok", "product": "WebGuard", "version": "0.3.0", "supabase_configured": CONFIGURED, "scanner_ready": True})
 
 
 @app.get("/api/features")
 def features():
     return jsonify({
-        "scanner_ready": False,
+        "scanner_ready": True,
         "features": [
             {"id": "sqli", "label": "SQL Injection", "status": "planned"},
-            {"id": "xss", "label": "Cross-Site Scripting", "status": "planned"},
+            {"id": "xss", "label": "Reflected Cross-Site Scripting", "status": "implemented", "module": "xss_reflected"},
             {"id": "headers", "label": "Security Headers", "status": "planned"},
             {"id": "cookies", "label": "Insecure Cookies", "status": "planned"},
             {"id": "files", "label": "Sensitive Resources", "status": "planned"},
@@ -250,6 +250,79 @@ def validate_target():
         raise ApiError("Expected a JSON object.")
     # Does not perform an HTTP request to the target.
     return jsonify({"accepted": True, "url": normalize_local_url(data.get("url")), "connected": False})
+
+
+def require_uuid(value, label):
+    try:
+        return str(uuid.UUID(value))
+    except (ValueError, TypeError, AttributeError):
+        raise ApiError(f"Invalid {label} ID.")
+
+
+@app.post("/api/scans/xss")
+@authenticate
+def scan_xss():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {"target_id"}:
+        raise ApiError("Send only the registered target_id in a JSON object.")
+    target_id = require_uuid(data["target_id"], "target")
+    rows = table_request("GET", "targets", params={"select": "id,name,url", "id": f"eq.{target_id}", "user_id": f"eq.{g.user_id}", "limit": "1"})
+    if not rows:
+        raise ApiError("Target not found.", 404)
+    target = rows[0]
+    try:
+        validate_scan_target(target["url"])
+    except ScanBlocked as error:
+        raise ApiError(str(error))
+    # Fail before testing if the required migration/table is not available.
+    table_request("GET", "scan_runs", params={"select": "id", "user_id": f"eq.{g.user_id}", "limit": "1"})
+    if not SCAN_SLOT.acquire(blocking=False):
+        raise ApiError("A local scan is already running. Retry when it finishes.", 429)
+    try:
+        try:
+            result = run_scan(target["url"])
+        except ScanBlocked as error:
+            raise ApiError(str(error))
+        try:
+            saved = table_request("POST", "rpc/save_scan_run", payload={"p_target_id": target_id, "p_result": result})
+            if not isinstance(saved, dict) or not saved.get("id"):
+                raise ApiError("Database did not return the saved scan.", 502)
+        except ApiError as error:
+            return jsonify({"error": f"Test ran, but results were NOT saved. {error.message}",
+                            "scan": {"target_snapshot": target, "result": result}, "persisted": False}), error.status
+        record_event("scan_completed", f"Reflected XSS: {target['name']} - {result['status']}")
+        return jsonify({"scan": saved, "persisted": True}), 201
+    finally:
+        SCAN_SLOT.release()
+
+
+@app.get("/api/scans")
+@authenticate
+def list_scans():
+    rows = table_request("GET", "scan_runs", params={"select": "*", "user_id": f"eq.{g.user_id}", "order": "created_at.desc", "limit": "100"})
+    return jsonify({"scans": rows})
+
+
+@app.get("/api/findings")
+@authenticate
+def list_findings():
+    rows = table_request("GET", "security_findings", params={"select": "*,scan_runs(target_snapshot,result,completed_at)", "user_id": f"eq.{g.user_id}", "order": "created_at.desc", "limit": "100"})
+    return jsonify({"findings": rows})
+
+
+@app.get("/api/scans/<scan_id>/report.pdf")
+@authenticate
+def download_report(scan_id):
+    from reporting.pdf import build_report
+
+    scan_id = require_uuid(scan_id, "scan")
+    rows = table_request("GET", "scan_runs", params={"select": "*", "id": f"eq.{scan_id}", "user_id": f"eq.{g.user_id}", "limit": "1"})
+    if not rows:
+        raise ApiError("Scan not found.", 404)
+    response = send_file(build_report(rows[0]), mimetype="application/pdf", as_attachment=True,
+                         download_name=f"webguard-{scan_id}.pdf", max_age=0)
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 if __name__ == "__main__":
