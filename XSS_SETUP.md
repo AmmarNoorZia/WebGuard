@@ -1,8 +1,12 @@
 # Reflected XSS vertical slice
 
+Stored XSS is now available as well. See [STORED_XSS_SETUP.md](STORED_XSS_SETUP.md)
+for the current implementation, Desktop lab changes, commands, and validation.
+The checkpoint results below describe the earlier Reflected XSS milestone.
+
 WebGuard tests only the registered target's `/search?q` route. The only payload is
 an HTML script element loading `/static/xss_demo.js`; the expected alert is
-`XSS demo - WebGuard Dummy Site A`. No other scanner is implemented.
+`XSS demo - WebGuard Dummy Site A`. Stored XSS has a separate `/comments` test.
 
 ## Validation performed in this workspace
 

@@ -11,6 +11,7 @@ from threading import Thread
 import pytest
 from dotenv import dotenv_values
 from playwright.sync_api import sync_playwright
+from pypdf import PdfReader
 from werkzeug.serving import make_server
 
 import app as api
@@ -19,7 +20,8 @@ from test_xss_browser import lab_sites
 
 @pytest.mark.ui
 @pytest.mark.browser
-def test_react_scan_findings_refresh_and_pdf(lab_sites, monkeypatch, tmp_path):
+@pytest.mark.parametrize("kind", ["Reflected", "Stored"])
+def test_react_scan_findings_refresh_and_pdf(lab_sites, monkeypatch, tmp_path, kind):
     for port in [5000]:
         with socket.socket() as check:
             if check.connect_ex(("127.0.0.1", port)) == 0:
@@ -89,19 +91,30 @@ def test_react_scan_findings_refresh_and_pdf(lab_sites, monkeypatch, tmp_path):
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto("http://127.0.0.1:5173/scans")
-                page.get_by_role("button", name="Run Reflected XSS Scan").wait_for()
+                page.get_by_label("Scan type").select_option(kind.lower())
+                page.get_by_role("button", name=f"Run {kind} XSS Scan").wait_for()
                 page.get_by_label("Registered target").select_option(targets[0]["id"])
-                page.get_by_role("button", name="Run Reflected XSS Scan").click()
+                page.get_by_role("button", name=f"Run {kind} XSS Scan").click()
                 page.locator(".detection-status.confirmed").first.wait_for(timeout=45000)
                 with page.expect_download() as download:
                     page.get_by_role("button", name="Download PDF").first.click()
                 download.value.save_as(tmp_path / "ui-confirmed.pdf")
+                confirmed_text = "\n".join(p.extract_text() for p in PdfReader(tmp_path / "ui-confirmed.pdf").pages)
+                assert f"{kind} Cross-Site" in confirmed_text
+                assert "Detection: confirmed" in confirmed_text
                 page.get_by_label("Registered target").select_option(targets[1]["id"])
-                page.get_by_role("button", name="Run Reflected XSS Scan").click()
+                page.get_by_role("button", name=f"Run {kind} XSS Scan").click()
                 page.locator(".detection-status.not_detected").first.wait_for(timeout=45000)
+                with page.expect_download() as download:
+                    page.get_by_role("button", name="Download PDF").first.click()
+                download.value.save_as(tmp_path / "ui-not-detected.pdf")
+                safe_text = "\n".join(p.extract_text() for p in PdfReader(tmp_path / "ui-not-detected.pdf").pages)
+                assert f"{kind} Cross-Site" in safe_text
+                assert "Detection: not detected" in safe_text
                 page.reload()
                 page.locator(".detection-status.confirmed").wait_for()
                 page.locator(".detection-status.not_detected").wait_for()
+                page.screenshot(path=str(tmp_path / "scans-dark.png"), full_page=True)
                 page.get_by_role("link", name="Findings", exact=True).click()
                 page.locator(".detection-status.confirmed").wait_for()
                 page.locator(".detection-status.not_detected").wait_for()

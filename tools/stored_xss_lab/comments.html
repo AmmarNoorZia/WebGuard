@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Comments{% endblock %}
+{% block content %}
+<h1>Local comments exercise</h1>
+<p>Dummy comments only. This page is part of the authorized WebGuard laboratory.</p>
+<form action="/comments" method="post" data-webguard-comments="v1">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label for="comment-body">Comment</label>
+  <textarea id="comment-body" name="body" maxlength="2000" required></textarea>
+  <button type="submit">Save comment</button>
+</form>
+<section aria-label="Saved comments">
+{% for comment in comments %}
+  <article data-comment-id="{{ comment.id }}">
+    <small>{{ comment.created_at }} UTC</small>
+    {# A deliberately accepts script HTML; B retains Jinja auto-escaping. #}
+    <div data-comment-body>{% if vulnerable %}{{ comment.body|safe }}{% else %}{{ comment.body }}{% endif %}</div>
+  </article>
+{% else %}<p>No comments yet.</p>{% endfor %}
+</section>
+{% endblock %}

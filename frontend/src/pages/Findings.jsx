@@ -12,6 +12,6 @@ export default function Findings() {
     {error && <p className="form-error" role="alert">{error}</p>}
     {loading && <p role="status">Loading saved results...</p>}
     {items.map(f => <ScanResult key={f.id} scan={{ id: f.scan_id, ...f.scan_runs }}/>) }
-    {!loading && !error && !items.length && <div className="panel"><EmptyState icon={ShieldAlert} title="No saved results" text="Run a Reflected XSS scan to save evidence and recommended fixes here."/></div>}
+    {!loading && !error && !items.length && <div className="panel"><EmptyState icon={ShieldAlert} title="No saved results" text="Run a Reflected or Stored XSS scan to save evidence and recommended fixes here."/></div>}
   </>
 }

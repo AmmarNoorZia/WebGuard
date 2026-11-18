@@ -1,20 +1,24 @@
 """Explicit opt-in real-browser tests; never import/run discovery.py.
 
-Fixtures represent the documented behavior, not the team's absent websites.
+Fixtures represent the documented behavior and reuse the comments lab module.
 The live tests never start or modify an existing website.
 """
 import socket
+import importlib.util
+import sqlite3
+from pathlib import Path
 from threading import Thread
 
 import pytest
-from flask import Flask, Response, render_template_string, request
+from flask import Flask, Response, render_template_string, request, g, send_file
+from jinja2 import ChoiceLoader, DictLoader, FileSystemLoader
 from werkzeug.serving import make_server
 
 from scanners.xss_reflected import EXPECTED_ALERT, LocalHTTP, browser_verify, run_scan
 
 
 @pytest.fixture
-def lab_sites():
+def lab_sites(tmp_path):
     # Refuse to replace or interfere with a contributor's running website.
     for port in (5001, 5002):
         with socket.socket() as check:
@@ -24,6 +28,27 @@ def lab_sites():
     try:
         for port, vulnerable in [(5001, True), (5002, False)]:
             lab = Flask(f"fixture-{port}")
+            lab.secret_key = "disposable-fixture-only"
+            support = Path(__file__).parents[2] / "tools" / "stored_xss_lab"
+            spec = importlib.util.spec_from_file_location("lab_comments_support", support / "stored_xss_lab.py")
+            comments_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(comments_module)
+            lab.jinja_loader = ChoiceLoader([FileSystemLoader(str(support)),
+                                            DictLoader({"base.html": "<html><body>{% block content %}{% endblock %}</body></html>"})])
+
+            def get_db(path=tmp_path / f"fixture-{port}.db"):
+                if "db" not in g:
+                    g.db = sqlite3.connect(path)
+                    g.db.row_factory = sqlite3.Row
+                return g.db
+
+            @lab.teardown_appcontext
+            def close_db(_error):
+                db = g.pop("db", None)
+                if db is not None:
+                    db.close()
+
+            comments_module.register_comments(lab, get_db, vulnerable=vulnerable)
 
             def search(vulnerable=vulnerable):
                 template = "<html><body><h1>Lab fixture</h1>{{ q|safe }}</body></html>" if vulnerable else "<html><body><h1>Lab fixture</h1>{{ q }}</body></html>"
@@ -33,6 +58,11 @@ def lab_sites():
 
             lab.add_url_rule("/search", view_func=search)
             lab.add_url_rule("/static/xss_demo.js", "demo", lambda: Response(f'alert("{EXPECTED_ALERT}");', content_type="application/javascript"))
+            lab.add_url_rule("/static/xss_stored_demo.js", "stored_demo", lambda: send_file(support / "xss_stored_demo.js", mimetype="application/javascript"))
+            @lab.after_request
+            def csp(response):
+                response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'"
+                return response
             server = make_server("127.0.0.1", port, lab, threaded=True)
             thread = Thread(target=server.serve_forever, daemon=True)
             thread.start()
