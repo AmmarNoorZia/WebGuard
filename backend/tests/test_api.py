@@ -12,10 +12,11 @@ class FoundationTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json['scanner_ready'])
 
-    def test_only_reflected_xss_is_implemented(self):
+    def test_all_three_xss_checks_are_implemented(self):
         response = self.client.get('/api/features')
         self.assertEqual(len(response.json['features']), 5)
         self.assertEqual([f['id'] for f in response.json['features'] if f['status'] == 'implemented'], ['xss'])
+        self.assertEqual(response.json['features'][1]['modules'], ['xss_reflected', 'xss_stored', 'xss_dom'])
         self.assertTrue(all(f['status'] == 'planned' for f in response.json['features'] if f['id'] != 'xss'))
 
     def test_loopback_addresses_accepted(self):

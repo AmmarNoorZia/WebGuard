@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}DOM input exercise{% endblock %}
+{% block content %}
+<section data-webguard-dom="v1" data-rendering="{{ 'unsafe' if vulnerable else 'safe' }}">
+  <h1>Browser-side input exercise</h1>
+  <p>This local demonstration reads the URL fragment in your browser.</p>
+  <form id="dom-form">
+    <label for="dom-input">Text to display</label>
+    <input id="dom-input" name="value" maxlength="2000" autocomplete="off">
+    <button type="submit">Display fragment</button>
+  </form>
+  <div id="dom-output"></div>
+  {# Parser-blocking on purpose: A demonstrates document.write as an HTML sink. #}
+  <script src="/static/dom_xss_lab.js"></script>
+</section>
+{% endblock %}

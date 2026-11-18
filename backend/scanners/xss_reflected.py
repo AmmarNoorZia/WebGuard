@@ -61,6 +61,7 @@ def validate_target(value: str) -> str:
 class LocalHTTP:
     MAX_REQUESTS = 6
     MAX_BYTES = 512 * 1024
+    ALLOWED_REQUESTS = {"GET": {"/search", DEMO_PATH}}
 
     def __init__(self, origin):
         self.origin = origin
@@ -70,15 +71,21 @@ class LocalHTTP:
         self.session.trust_env = False  # Ignore HTTP_PROXY and ambient credentials.
 
     def get(self, url):
+        return self.request("GET", url)
+
+    def request(self, method, url, data=None):
         parts = urlsplit(url)
         base = urlsplit(self.origin)
-        if (parts.scheme, parts.netloc) != (base.scheme, base.netloc) or parts.path not in {"/search", DEMO_PATH} or parts.fragment:
+        if ((parts.scheme, parts.netloc) != (base.scheme, base.netloc)
+                or parts.path not in self.ALLOWED_REQUESTS.get(method, set()) or parts.fragment):
             raise ScanBlocked("Blocked request outside the permitted local endpoint and demo script.")
         self.count += 1
         remaining = self.deadline - time.monotonic()
         if self.count > self.MAX_REQUESTS or remaining <= 0:
             raise ScanIncomplete("Local request or time limit reached.")
-        with self.session.get(url, allow_redirects=False, timeout=min(4, remaining), stream=True,
+        send = self.session.get if method == "GET" else self.session.post
+        options = {"data": data} if method == "POST" else {}
+        with send(url, **options, allow_redirects=False, timeout=min(4, remaining), stream=True,
                               headers={"User-Agent": "WebGuard-Local-XSS/1.0", "Accept-Encoding": "identity"}) as response:
             if 300 <= response.status_code < 400:
                 raise ScanIncomplete(f"HTTP {response.status_code} redirect blocked; no redirect destination was contacted.")
@@ -96,7 +103,7 @@ class LocalHTTP:
         self.session.close()
 
 
-def browser_verify(http, baseline_url, baseline, test_url, tested):
+def browser_verify(http, baseline_url, baseline, test_url, tested, *, demo_path=DEMO_PATH):
     """Keep CSP enabled; only an observed alert can prove execution."""
     from playwright.sync_api import sync_playwright
 
@@ -124,7 +131,7 @@ def browser_verify(http, baseline_url, baseline, test_url, tested):
                                     and req.is_navigation_request() and req.frame == page.main_frame):
                                 navigation_served = True
                                 route.fulfill(status=captured["status"], headers=captured["headers"], body=captured["body"])
-                            elif (req.url == http.origin + DEMO_PATH and req.method == "GET"
+                            elif (req.url == http.origin + demo_path and req.method == "GET"
                                   and req.resource_type == "script" and req.frame == page.main_frame):
                                 script = http.get(req.url)
                                 if label == "test":

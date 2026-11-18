@@ -2,15 +2,16 @@
 import base64
 import copy
 import json
-import socket
 import time
 import uuid
 from pathlib import Path
 from threading import Thread
+from urllib.parse import urlsplit
 
 import pytest
 from dotenv import dotenv_values
 from playwright.sync_api import sync_playwright
+from pypdf import PdfReader
 from werkzeug.serving import make_server
 
 import app as api
@@ -19,17 +20,15 @@ from test_xss_browser import lab_sites
 
 @pytest.mark.ui
 @pytest.mark.browser
-def test_react_scan_findings_refresh_and_pdf(lab_sites, monkeypatch, tmp_path):
-    for port in [5000]:
-        with socket.socket() as check:
-            if check.connect_ex(("127.0.0.1", port)) == 0:
-                pytest.skip("Port 5000 occupied; disposable API will not replace it.")
+@pytest.mark.parametrize("option,label,title", [("reflected", "Reflected XSS", "Reflected Cross-Site"),
+    ("stored", "Stored XSS", "Stored Cross-Site"), ("dom", "DOM-Based XSS", "DOM-Based Cross-Site")])
+def test_react_scan_findings_refresh_and_pdf(lab_sites, monkeypatch, tmp_path, option, label, title):
     config = dotenv_values(Path(__file__).parents[2] / "frontend" / ".env")
     supabase_url = config.get("VITE_SUPABASE_URL", "")
     if not supabase_url.startswith("https://"):
         pytest.skip("Frontend needs its existing Supabase URL for auth initialization.")
     user_id = str(uuid.uuid4())
-    targets = [{"id": str(uuid.uuid4()), "name": f"UI Website {letter}", "url": f"http://127.0.0.1:{port}"} for letter, port in [("A", 5001), ("B", 5002)]]
+    targets = [{"id": str(uuid.uuid4()), "name": f"UI Website {letter}", "url": lab_sites[port]} for letter, port in [("A", 5001), ("B", 5002)]]
     scans, findings, events = [], [], []
     monkeypatch.setattr(api, "CONFIGURED", True)
 
@@ -66,7 +65,7 @@ def test_react_scan_findings_refresh_and_pdf(lab_sites, monkeypatch, tmp_path):
         raise AssertionError(table)
 
     monkeypatch.setattr(api, "table_request", database)
-    server = make_server("127.0.0.1", 5000, api.app, threaded=True)
+    server = make_server("127.0.0.1", 0, api.app, threaded=True)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -79,6 +78,15 @@ def test_react_scan_findings_refresh_and_pdf(lab_sites, monkeypatch, tmp_path):
             browser = pw.chromium.launch(channel="chrome", headless=True)
             try:
                 context = browser.new_context(accept_downloads=True)
+                # Route only this isolated browser's API calls to our disposable
+                # Flask server. Vite's production proxy and running API stay intact.
+                def local_api(route):
+                    parts = urlsplit(route.request.url)
+                    destination = f"http://127.0.0.1:{server.server_port}{parts.path}"
+                    if parts.query:
+                        destination += "?" + parts.query
+                    route.fulfill(response=route.fetch(url=destination))
+                context.route("http://127.0.0.1:5173/api/**", local_api)
                 context.route(supabase_url + "/**", lambda route: route.fulfill(json=user, headers={
                     "Access-Control-Allow-Origin": "*",
                     "Access-Control-Allow-Headers": "authorization,apikey,content-type,x-client-info,x-supabase-api-version",
@@ -89,19 +97,30 @@ def test_react_scan_findings_refresh_and_pdf(lab_sites, monkeypatch, tmp_path):
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto("http://127.0.0.1:5173/scans")
-                page.get_by_role("button", name="Run Reflected XSS Scan").wait_for()
+                page.get_by_label("Scan type").select_option(option)
+                page.get_by_role("button", name=f"Run {label} Scan").wait_for()
                 page.get_by_label("Registered target").select_option(targets[0]["id"])
-                page.get_by_role("button", name="Run Reflected XSS Scan").click()
+                page.get_by_role("button", name=f"Run {label} Scan").click()
                 page.locator(".detection-status.confirmed").first.wait_for(timeout=45000)
                 with page.expect_download() as download:
                     page.get_by_role("button", name="Download PDF").first.click()
                 download.value.save_as(tmp_path / "ui-confirmed.pdf")
+                confirmed_text = "\n".join(p.extract_text() for p in PdfReader(tmp_path / "ui-confirmed.pdf").pages)
+                assert title in confirmed_text
+                assert "Detection: confirmed" in confirmed_text
                 page.get_by_label("Registered target").select_option(targets[1]["id"])
-                page.get_by_role("button", name="Run Reflected XSS Scan").click()
+                page.get_by_role("button", name=f"Run {label} Scan").click()
                 page.locator(".detection-status.not_detected").first.wait_for(timeout=45000)
+                with page.expect_download() as download:
+                    page.get_by_role("button", name="Download PDF").first.click()
+                download.value.save_as(tmp_path / "ui-not-detected.pdf")
+                safe_text = "\n".join(p.extract_text() for p in PdfReader(tmp_path / "ui-not-detected.pdf").pages)
+                assert title in safe_text
+                assert "Detection: not detected" in safe_text
                 page.reload()
                 page.locator(".detection-status.confirmed").wait_for()
                 page.locator(".detection-status.not_detected").wait_for()
+                page.screenshot(path=str(tmp_path / "scans-dark.png"), full_page=True)
                 page.get_by_role("link", name="Findings", exact=True).click()
                 page.locator(".detection-status.confirmed").wait_for()
                 page.locator(".detection-status.not_detected").wait_for()

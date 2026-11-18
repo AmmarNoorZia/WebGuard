@@ -1,4 +1,4 @@
-"""Authenticated WebGuard API and restricted reflected-XSS lab scanning."""
+"""Authenticated WebGuard API and restricted reflected/stored/DOM-XSS scanning."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 from flask import Flask, g, jsonify, request, send_file
 
 from scanners.xss_reflected import ScanBlocked, run_scan, validate_target as validate_scan_target
+from scanners.xss_stored import run_scan as run_stored_scan
+from scanners.xss_dom import run_scan as run_dom_scan
 
 load_dotenv()
 app = Flask(__name__)
@@ -177,7 +179,7 @@ def features():
         "scanner_ready": True,
         "features": [
             {"id": "sqli", "label": "SQL Injection", "status": "planned"},
-            {"id": "xss", "label": "Reflected Cross-Site Scripting", "status": "implemented", "module": "xss_reflected"},
+            {"id": "xss", "label": "Reflected, Stored and DOM-Based Cross-Site Scripting", "status": "implemented", "module": "xss_reflected", "modules": ["xss_reflected", "xss_stored", "xss_dom"]},
             {"id": "headers", "label": "Security Headers", "status": "planned"},
             {"id": "cookies", "label": "Insecure Cookies", "status": "planned"},
             {"id": "files", "label": "Sensitive Resources", "status": "planned"},
@@ -262,6 +264,22 @@ def require_uuid(value, label):
 @app.post("/api/scans/xss")
 @authenticate
 def scan_xss():
+    return execute_xss_scan(run_scan, "Reflected XSS")
+
+
+@app.post("/api/scans/xss/stored")
+@authenticate
+def scan_stored_xss():
+    return execute_xss_scan(run_stored_scan, "Stored XSS")
+
+
+@app.post("/api/scans/xss/dom")
+@authenticate
+def scan_dom_xss():
+    return execute_xss_scan(run_dom_scan, "DOM-Based XSS")
+
+
+def execute_xss_scan(scanner, label):
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or set(data) != {"target_id"}:
         raise ApiError("Send only the registered target_id in a JSON object.")
@@ -280,7 +298,7 @@ def scan_xss():
         raise ApiError("A local scan is already running. Retry when it finishes.", 429)
     try:
         try:
-            result = run_scan(target["url"])
+            result = scanner(target["url"])
         except ScanBlocked as error:
             raise ApiError(str(error))
         try:
@@ -290,7 +308,7 @@ def scan_xss():
         except ApiError as error:
             return jsonify({"error": f"Test ran, but results were NOT saved. {error.message}",
                             "scan": {"target_snapshot": target, "result": result}, "persisted": False}), error.status
-        record_event("scan_completed", f"Reflected XSS: {target['name']} - {result['status']}")
+        record_event("scan_completed", f"{label}: {target['name']} - {result['status']}")
         return jsonify({"scan": saved, "persisted": True}), 201
     finally:
         SCAN_SLOT.release()

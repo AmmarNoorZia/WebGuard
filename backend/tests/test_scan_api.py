@@ -7,6 +7,8 @@ from pypdf import PdfReader
 
 import app as api
 from scanners import xss_reflected as xss
+from scanners import xss_stored
+from scanners import xss_dom
 
 USER = "bc1f8079-49c3-4081-9a8e-2511e80c1a64"
 TARGET_ID = "54d36993-9b22-40c3-bd88-872cf67918a2"
@@ -15,9 +17,22 @@ HEADERS = {"Authorization": "Bearer test-jwt"}
 TARGET = {"id": TARGET_ID, "name": "Website A <lab>", "url": "http://127.0.0.1:5001"}
 
 
+@pytest.fixture(params=[("/api/scans/xss", "run_scan"), ("/api/scans/xss/stored", "run_stored_scan"), ("/api/scans/xss/dom", "run_dom_scan")])
+def scan_case(request):
+    return request.param
+
+
 @pytest.fixture
-def actual_result(monkeypatch):
+def actual_result(monkeypatch, scan_case):
     # Exercise the real result builder; mock only HTTP and browser proof.
+    if scan_case[1] == "run_dom_scan":
+        from test_xss_dom import configure_scan
+        configure_scan(monkeypatch, execute=True)
+        return xss_dom.run_scan(TARGET["url"])
+    if scan_case[1] == "run_stored_scan":
+        from test_xss_stored import configure_scan
+        configure_scan(monkeypatch, execute=True)
+        return xss_stored.run_scan(TARGET["url"])
     from test_xss_reflected import configure_scan
     configure_scan(monkeypatch, alerts=[xss.EXPECTED_ALERT])
     return xss.run_scan(TARGET["url"])
@@ -31,39 +46,49 @@ def client(monkeypatch):
 
 
 @pytest.mark.parametrize("method,path", [
-    ("post", "/api/scans/xss"), ("get", "/api/scans"), ("get", "/api/findings"),
+    ("post", "/api/scans/xss"), ("post", "/api/scans/xss/stored"), ("post", "/api/scans/xss/dom"), ("get", "/api/scans"), ("get", "/api/findings"),
     ("get", f"/api/scans/{SCAN_ID}/report.pdf"),
 ])
 def test_scan_endpoints_require_auth(client, method, path):
     assert getattr(client, method)(path).status_code == 401
 
 
-def test_other_users_target_is_not_scanned(client, monkeypatch):
+def test_expired_token_stops_scan_before_target_access(client, monkeypatch, scan_case):
+    monkeypatch.setattr(api.requests, "get", Mock(return_value=Mock(status_code=401)))
+    database, scanner = Mock(), Mock()
+    monkeypatch.setattr(api, "table_request", database)
+    monkeypatch.setattr(api, scan_case[1], scanner)
+    assert client.post(scan_case[0], headers=HEADERS, json={"target_id": TARGET_ID}).status_code == 401
+    database.assert_not_called()
+    scanner.assert_not_called()
+
+
+def test_other_users_target_is_not_scanned(client, monkeypatch, scan_case):
     database = Mock(return_value=[])
     scanner = Mock()
     monkeypatch.setattr(api, "table_request", database)
-    monkeypatch.setattr(api, "run_scan", scanner)
-    response = client.post("/api/scans/xss", headers=HEADERS, json={"target_id": TARGET_ID})
+    monkeypatch.setattr(api, scan_case[1], scanner)
+    response = client.post(scan_case[0], headers=HEADERS, json={"target_id": TARGET_ID})
     assert response.status_code == 404
     assert database.call_args.kwargs["params"]["user_id"] == f"eq.{USER}"
     scanner.assert_not_called()
 
 
 @pytest.mark.parametrize("url", ["https://example.com", "http://127.0.0.1:5000", "http://127.0.0.1:5001/admin"])
-def test_unsafe_registered_target_is_rejected(client, monkeypatch, url):
+def test_unsafe_registered_target_is_rejected(client, monkeypatch, url, scan_case):
     monkeypatch.setattr(api, "table_request", Mock(return_value=[{**TARGET, "url": url}]))
     scanner = Mock()
-    monkeypatch.setattr(api, "run_scan", scanner)
-    assert client.post("/api/scans/xss", headers=HEADERS, json={"target_id": TARGET_ID}).status_code == 400
+    monkeypatch.setattr(api, scan_case[1], scanner)
+    assert client.post(scan_case[0], headers=HEADERS, json={"target_id": TARGET_ID}).status_code == 400
     scanner.assert_not_called()
 
 
 @pytest.mark.parametrize("data", [None, [], {"url": "http://127.0.0.1:5001"}, {"target_id": "invalid"}, {"target_id": TARGET_ID, "url": "http://127.0.0.1:5002"}])
-def test_requires_only_registered_target_id(client, data):
-    assert client.post("/api/scans/xss", headers=HEADERS, json=data).status_code == 400
+def test_requires_only_registered_target_id(client, data, scan_case):
+    assert client.post(scan_case[0], headers=HEADERS, json=data).status_code == 400
 
 
-def test_scan_persists_and_reload_reads_saved_results(client, monkeypatch, actual_result):
+def test_scan_persists_and_reload_reads_saved_results(client, monkeypatch, actual_result, scan_case):
     saved_runs = []
     saved_findings = []
     calls = []
@@ -89,8 +114,8 @@ def test_scan_persists_and_reload_reads_saved_results(client, monkeypatch, actua
         return []
 
     monkeypatch.setattr(api, "table_request", database)
-    monkeypatch.setattr(api, "run_scan", Mock(return_value=actual_result))
-    response = client.post("/api/scans/xss", headers=HEADERS, json={"target_id": TARGET_ID})
+    monkeypatch.setattr(api, scan_case[1], Mock(return_value=actual_result))
+    response = client.post(scan_case[0], headers=HEADERS, json={"target_id": TARGET_ID})
     assert response.status_code == 201
     assert response.json["persisted"] is True
     assert client.get("/api/scans", headers=HEADERS).json["scans"][0]["result"] == actual_result
@@ -101,7 +126,7 @@ def test_scan_persists_and_reload_reads_saved_results(client, monkeypatch, actua
     assert report.mimetype == "application/pdf"
     assert report.headers["Cache-Control"] == "private, no-store"
     text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(report.data)).pages)
-    for expected in ["WebGuard", TARGET["name"], SCAN_ID, TARGET_ID, "confirmed", "high", "/search", xss.EXPECTED_ALERT, "Recommended mitigation"]:
+    for expected in ["WebGuard", TARGET["name"], SCAN_ID, TARGET_ID, "confirmed", "high", actual_result["affected_url"], actual_result["evidence"]["expected_alert"], "Recommended mitigation"]:
         assert expected in text
 
 
@@ -112,7 +137,7 @@ def test_pdf_rejects_other_users_scan(client, monkeypatch):
     assert db.call_args.kwargs["params"]["user_id"] == f"eq.{USER}"
 
 
-def test_database_failure_does_not_claim_persistence(client, monkeypatch, actual_result):
+def test_database_failure_does_not_claim_persistence(client, monkeypatch, actual_result, scan_case):
     def database(method, table, **kwargs):
         if table == "targets":
             return [TARGET]
@@ -120,30 +145,30 @@ def test_database_failure_does_not_claim_persistence(client, monkeypatch, actual
             raise api.ApiError("Migration missing.", 502)
         return []
     monkeypatch.setattr(api, "table_request", database)
-    monkeypatch.setattr(api, "run_scan", Mock(return_value=actual_result))
-    response = client.post("/api/scans/xss", headers=HEADERS, json={"target_id": TARGET_ID})
+    monkeypatch.setattr(api, scan_case[1], Mock(return_value=actual_result))
+    response = client.post(scan_case[0], headers=HEADERS, json={"target_id": TARGET_ID})
     assert response.status_code == 502
     assert response.json["persisted"] is False
     assert response.json["scan"]["result"] == actual_result
     assert "id" not in response.json["scan"]
 
 
-def test_missing_migration_stops_scan_before_testing(client, monkeypatch):
+def test_missing_migration_stops_scan_before_testing(client, monkeypatch, scan_case):
     def database(method, table, **kwargs):
         if table == "targets":
             return [TARGET]
         raise api.ApiError("Migration missing.", 502)
     monkeypatch.setattr(api, "table_request", database)
     scanner = Mock()
-    monkeypatch.setattr(api, "run_scan", scanner)
-    assert client.post("/api/scans/xss", headers=HEADERS, json={"target_id": TARGET_ID}).status_code == 502
+    monkeypatch.setattr(api, scan_case[1], scanner)
+    assert client.post(scan_case[0], headers=HEADERS, json={"target_id": TARGET_ID}).status_code == 502
     scanner.assert_not_called()
 
 
-def test_concurrent_scan_returns_retryable_error(client, monkeypatch):
+def test_concurrent_scan_returns_retryable_error(client, monkeypatch, scan_case):
     monkeypatch.setattr(api, "table_request", Mock(return_value=[TARGET]))
     assert api.SCAN_SLOT.acquire(blocking=False)
     try:
-        assert client.post("/api/scans/xss", headers=HEADERS, json={"target_id": TARGET_ID}).status_code == 429
+        assert client.post(scan_case[0], headers=HEADERS, json={"target_id": TARGET_ID}).status_code == 429
     finally:
         api.SCAN_SLOT.release()

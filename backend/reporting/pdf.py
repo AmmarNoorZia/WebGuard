@@ -16,6 +16,7 @@ def build_report(scan):
     styles = getSampleStyleSheet()
     styles["Title"].textColor = colors.HexColor("#16734f")
     styles["Title"].alignment = TA_LEFT
+    styles["Heading2"].keepWithNext = True
     for name in ("BodyText", "Heading2"):
         styles[name].wordWrap = "CJK"
     styles["BodyText"].leading = 14
