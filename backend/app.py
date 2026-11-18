@@ -1,4 +1,4 @@
-"""Authenticated WebGuard API and restricted reflected/stored-XSS lab scanning."""
+"""Authenticated WebGuard API and restricted reflected/stored/DOM-XSS scanning."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from flask import Flask, g, jsonify, request, send_file
 
 from scanners.xss_reflected import ScanBlocked, run_scan, validate_target as validate_scan_target
 from scanners.xss_stored import run_scan as run_stored_scan
+from scanners.xss_dom import run_scan as run_dom_scan
 
 load_dotenv()
 app = Flask(__name__)
@@ -178,7 +179,7 @@ def features():
         "scanner_ready": True,
         "features": [
             {"id": "sqli", "label": "SQL Injection", "status": "planned"},
-            {"id": "xss", "label": "Reflected and Stored Cross-Site Scripting", "status": "implemented", "module": "xss_reflected", "modules": ["xss_reflected", "xss_stored"]},
+            {"id": "xss", "label": "Reflected, Stored and DOM-Based Cross-Site Scripting", "status": "implemented", "module": "xss_reflected", "modules": ["xss_reflected", "xss_stored", "xss_dom"]},
             {"id": "headers", "label": "Security Headers", "status": "planned"},
             {"id": "cookies", "label": "Insecure Cookies", "status": "planned"},
             {"id": "files", "label": "Sensitive Resources", "status": "planned"},
@@ -270,6 +271,12 @@ def scan_xss():
 @authenticate
 def scan_stored_xss():
     return execute_xss_scan(run_stored_scan, "Stored XSS")
+
+
+@app.post("/api/scans/xss/dom")
+@authenticate
+def scan_dom_xss():
+    return execute_xss_scan(run_dom_scan, "DOM-Based XSS")
 
 
 def execute_xss_scan(scanner, label):

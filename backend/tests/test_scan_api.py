@@ -8,6 +8,7 @@ from pypdf import PdfReader
 import app as api
 from scanners import xss_reflected as xss
 from scanners import xss_stored
+from scanners import xss_dom
 
 USER = "bc1f8079-49c3-4081-9a8e-2511e80c1a64"
 TARGET_ID = "54d36993-9b22-40c3-bd88-872cf67918a2"
@@ -16,7 +17,7 @@ HEADERS = {"Authorization": "Bearer test-jwt"}
 TARGET = {"id": TARGET_ID, "name": "Website A <lab>", "url": "http://127.0.0.1:5001"}
 
 
-@pytest.fixture(params=[("/api/scans/xss", "run_scan"), ("/api/scans/xss/stored", "run_stored_scan")])
+@pytest.fixture(params=[("/api/scans/xss", "run_scan"), ("/api/scans/xss/stored", "run_stored_scan"), ("/api/scans/xss/dom", "run_dom_scan")])
 def scan_case(request):
     return request.param
 
@@ -24,6 +25,10 @@ def scan_case(request):
 @pytest.fixture
 def actual_result(monkeypatch, scan_case):
     # Exercise the real result builder; mock only HTTP and browser proof.
+    if scan_case[1] == "run_dom_scan":
+        from test_xss_dom import configure_scan
+        configure_scan(monkeypatch, execute=True)
+        return xss_dom.run_scan(TARGET["url"])
     if scan_case[1] == "run_stored_scan":
         from test_xss_stored import configure_scan
         configure_scan(monkeypatch, execute=True)
@@ -41,7 +46,7 @@ def client(monkeypatch):
 
 
 @pytest.mark.parametrize("method,path", [
-    ("post", "/api/scans/xss"), ("post", "/api/scans/xss/stored"), ("get", "/api/scans"), ("get", "/api/findings"),
+    ("post", "/api/scans/xss"), ("post", "/api/scans/xss/stored"), ("post", "/api/scans/xss/dom"), ("get", "/api/scans"), ("get", "/api/findings"),
     ("get", f"/api/scans/{SCAN_ID}/report.pdf"),
 ])
 def test_scan_endpoints_require_auth(client, method, path):

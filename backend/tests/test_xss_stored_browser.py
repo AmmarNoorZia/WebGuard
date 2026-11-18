@@ -7,9 +7,10 @@ from scanners.xss_stored import run_scan, ALERT_PREFIX
 from test_xss_browser import lab_sites
 
 
-def verify_pair(tmp_path):
+def verify_pair(tmp_path, origins=None):
+    origins = origins or {port: f"http://127.0.0.1:{port}" for port in (5001, 5002)}
     for port, expected in [(5001, "confirmed"), (5002, "not_detected")]:
-        result = run_scan(f"http://127.0.0.1:{port}")
+        result = run_scan(origins[port])
         assert result["status"] == expected, result
         evidence = result["evidence"]
         assert evidence["stored_comment_verified"]
@@ -19,7 +20,7 @@ def verify_pair(tmp_path):
         assert (alert in evidence["browser"]["test_alerts"]) is (expected == "confirmed")
         assert alert not in evidence["browser"]["baseline_alerts"]
         report = build_report({"id": f"local-{port}", "target_snapshot": {"id": str(port),
-                              "name": f"Website on {port}", "url": f"http://127.0.0.1:{port}"}, "result": result})
+                              "name": f"Website on {port}", "url": origins[port]}, "result": result})
         text = "\n".join(page.extract_text() for page in PdfReader(report).pages)
         for value in ["Stored Cross-Site", "/comments", result["completed_at"], expected.replace("_", " "), evidence["marker"], "Recommended mitigation"]:
             assert value in text
@@ -29,12 +30,12 @@ def verify_pair(tmp_path):
 
 @pytest.mark.browser
 def test_stored_vulnerable_and_protected_with_chrome(lab_sites, tmp_path):
-    verify_pair(tmp_path)
+    verify_pair(tmp_path, lab_sites)
 
 
 @pytest.mark.live
-def test_stored_team_websites_with_chrome(tmp_path):
-    verify_pair(tmp_path)
+def test_stored_team_websites_with_chrome(tmp_path, live_origins):
+    verify_pair(tmp_path, live_origins)
 
 
 @pytest.mark.browser
